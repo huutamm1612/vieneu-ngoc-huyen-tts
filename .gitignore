@@ -1,0 +1,29 @@
+# Local dataset. Metadata may be tracked later if explicitly desired.
+data/
+
+# Local training outputs and caches.
+outputs/
+.cache/
+*.log
+
+# Python.
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# IDE / OS.
+.idea/
+.vscode/
+.DS_Store
+Thumbs.db
+
+# Secrets.
+.env
+.env.*
+!.env.example
+

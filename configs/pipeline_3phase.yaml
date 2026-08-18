@@ -1,0 +1,88 @@
+run:
+  name: ngoc-a10-v1
+  seed: 3407
+  output_root: ./outputs
+  resume: true
+  cleanup_runtime_checkpoints: true
+
+model:
+  base_model: pnnbao-ump/VieNeu-TTS
+  model_revision: null
+  codec_model: neuphonic/neucodec
+  codec_revision: null
+  dtype: bfloat16
+  max_sequence_length: 2048
+  trust_remote_code: false
+
+data:
+  dataset_root: ./data
+  audio_directory: audio
+  train_metadata: metadata.csv
+  eval_metadata: metadata_eval.csv
+  codec_input_sample_rate: 16000
+  fail_on_data_error: true
+  rebuild_encoded_cache: false
+  encoded_commit_interval: 250
+  dataloader_num_workers: 4
+  pad_to_multiple_of: 8
+
+phase1_lora:
+  learning_rate: 1.0e-4
+  num_train_epochs: 5
+  per_device_train_batch_size: 4
+  per_device_eval_batch_size: 4
+  gradient_accumulation_steps: 8
+  warmup_ratio: 0.05
+  weight_decay: 0.01
+  max_grad_norm: 1.0
+  lr_scheduler_type: cosine
+  logging_steps: 10
+  eval_steps: 50
+  save_steps: 50
+  early_stopping_patience: 5
+  bf16: true
+  tf32: true
+  gradient_checkpointing: false
+  lora_rank: 64
+  lora_alpha: 128
+  lora_dropout: 0.05
+  lora_target_modules:
+    - q_proj
+    - k_proj
+    - v_proj
+    - o_proj
+    - gate_proj
+    - up_proj
+    - down_proj
+
+phase2_merge:
+  safe_merge: true
+  verify_merge: true
+  verification_tokens: 128
+  max_abs_logit_difference: 0.5
+
+phase3_finetune:
+  learning_rate: 1.0e-6
+  num_train_epochs: 2
+  per_device_train_batch_size: 4
+  per_device_eval_batch_size: 4
+  gradient_accumulation_steps: 8
+  warmup_ratio: 0.03
+  weight_decay: 0.01
+  max_grad_norm: 0.5
+  lr_scheduler_type: cosine
+  logging_steps: 10
+  eval_steps: 50
+  save_steps: 50
+  early_stopping_patience: 4
+  bf16: true
+  tf32: true
+  gradient_checkpointing: true
+  unfreeze_mode: upper_blocks_and_output_head
+  upper_blocks_ratio: 0.33
+
+artifacts:
+  keep_phase1_final: true
+  keep_phase2_final: true
+  keep_phase3_final: true
+  max_shard_size: 5GB
