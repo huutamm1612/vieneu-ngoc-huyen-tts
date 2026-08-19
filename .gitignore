@@ -1,5 +1,6 @@
 # Local dataset. Metadata may be tracked later if explicitly desired.
 data/
+samples/
 
 # Local training outputs and caches.
 outputs/

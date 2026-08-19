@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "vieneu-three-phase-training"
 version = "0.1.0"
-description = "Independent three-phase VieNeu-TTS training pipeline with a thin Modal runner"
+description = "Portable VieNeu-TTS training and inference with thin cloud adapters"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "PyYAML==6.0.2",
@@ -29,6 +29,21 @@ train = [
   "transformers==4.57.6",
   "tqdm>=4.67,<5",
 ]
+inference = [
+  "huggingface-hub>=0.34,<1",
+  "librosa==0.11.0",
+  "neucodec==0.0.6",
+  "numpy>=2.0.2,<3",
+  "peft==0.18.0",
+  "safetensors>=0.5,<1",
+  "sea-g2p==0.8.4",
+  "soundfile>=0.13,<1",
+  "soxr>=0.5,<1",
+  "torch==2.8.0",
+  "torchao==0.13.0",
+  "torchaudio==2.8.0",
+  "transformers==4.57.6",
+]
 cloud = [
   "modal==1.5.4",
 ]
@@ -39,13 +54,14 @@ dev = [
 
 [project.scripts]
 tts-train = "train.cli:main"
+tts-infer = "inference.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
 
 [tool.setuptools.packages.find]
 where = ["src"]
-include = ["train*"]
+include = ["train*", "inference*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

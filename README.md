@@ -1,6 +1,6 @@
-# VieNeu-TTS three-phase training
+# VieNeu-TTS training và inference
 
-Repo này chứa toàn bộ logic training độc lập với Modal. Modal chỉ cung cấp T4 cho NeuCodec, A10 cho training và các Volume; code, config và script đều nằm trong repo để có thể đưa lên GitHub.
+Repo này chứa toàn bộ logic training và inference độc lập với Modal. Modal chỉ cung cấp GPU/Volume; code, config và script đều nằm trong repo để có thể clone và chạy trên local, Kaggle hoặc cloud khác.
 
 ## Pipeline
 
@@ -32,6 +32,16 @@ src/train/
   phases.py                  # ba phase
   pipeline.py                # orchestration, resume, state
   cli.py                     # chạy core không phụ thuộc Modal
+src/inference/
+  preprocessing.py           # normalize, chunk, phoneme
+  batching.py                # logical batch + phân phối worker
+  modeling.py                # full model/LoRA cũ, reference, NeuCodec
+  generation.py              # one model replica/GPU, OOM split + retry
+  audio.py                   # ghép segment theo index thành một WAV
+  api.py                     # API import được, batches=None
+  cli.py                     # CLI không phụ thuộc môi trường
+notebooks/
+  inference_kaggle.ipynb     # hướng dẫn Kaggle không hard-code token
 tests/
 ```
 
@@ -170,4 +180,130 @@ Chỉ kiểm tra config và dataset local, không tải model:
 ```powershell
 $env:PYTHONPATH = "src"
 python -m train --config configs/pipeline_3phase.yaml --validate-only
+```
+
+## Inference độc lập môi trường
+
+Đầu vào model chuẩn là artifact full model cuối Phase 3:
+
+```text
+/runs/<run-name>/phase3_finetune/final/
+```
+
+Pipeline thực hiện: đọc TXT → normalize giống dữ liệu train → chia đoạn `80/128/156` ký tự → sea-g2p → logical batch `128`, length gap `12` → encode reference đúng một lần → sinh NeuCodec token → decode các segment → sắp lại theo `index` → ghi nguyên tử một file WAV. Nếu một segment vẫn lỗi sau retry, pipeline không tạo WAV thiếu đoạn.
+
+`batch_size=128` là logical batch. `max_runtime_batch_size` có thể chia forward pass nhỏ hơn để vừa VRAM mà không đổi dữ liệu/batching. Khi có nhiều GPU, mỗi GPU giữ một bản đầy đủ của model và xử lý các batch độc lập; đây là data parallel inference, không phải model sharding.
+
+### CLI local/Linux/Kaggle
+
+Máy chạy inference cần cài dependency đầy đủ:
+
+```powershell
+python -m pip install -e ".[inference]"
+```
+
+Chạy một GPU tự động:
+
+```powershell
+python -m inference `
+  --config configs/inference.yaml `
+  --model "D:\models\ngoc-a10-v1\phase3_finetune\final" `
+  --input "D:\stories\story.txt" `
+  --reference-audio "D:\Project\TTS\data\audio\ngochuyen_00769.wav" `
+  --reference-text "Vì thế, Đồng chí luôn được các Đồng chí lãnh đạo cấp cao của Đảng tin tưởng, đánh giá cao." `
+  --output "D:\stories\story_complete.wav"
+```
+
+Hai GPU:
+
+```powershell
+python -m inference ... --devices "cuda:0,cuda:1" --num-gpus 2
+```
+
+Trên T4 có thể giữ logical batch 128 nhưng giới hạn mỗi forward:
+
+```powershell
+python -m inference ... --batch-size 128 --max-runtime-batch-size 8
+```
+
+### Python API
+
+Không truyền `batches` thì `infer()` tự tiền xử lý và tạo batch:
+
+```python
+from inference import InferenceConfig, TTSInference
+
+config = InferenceConfig(
+    model="/path/to/phase3_finetune/final",
+    num_gpus=1,
+)
+
+with TTSInference(config) as tts:
+    result = tts.infer(
+        input_path="story.txt",
+        reference_audio="ngochuyen_00769.wav",
+        reference_text="Vì thế, Đồng chí luôn được các Đồng chí lãnh đạo cấp cao của Đảng tin tưởng, đánh giá cao.",
+        output_path="story_complete.wav",
+    )
+```
+
+Muốn xem hoặc sửa batch trước khi infer:
+
+```python
+from inference import prepare_batches
+
+batches = prepare_batches(
+    input_path="story.txt",
+    min_chars=80,
+    target_chars=128,
+    max_chars=156,
+    batch_size=128,
+    max_length_gap=12,
+)
+result = tts.infer(
+    batches=batches,
+    reference_audio="ngochuyen_00769.wav",
+    reference_text="Vì thế, Đồng chí luôn được các Đồng chí lãnh đạo cấp cao của Đảng tin tưởng, đánh giá cao.",
+    output_path="story_complete.wav",
+)
+```
+
+### Modal inference
+
+Upload TXT một lần:
+
+```powershell
+.\scripts\upload_inference_text.ps1 -InputPath "D:\stories\story.txt"
+```
+
+Chạy trên một A10, đọc model trực tiếp từ `tts-training-results` và chỉ lưu WAV cuối vào `tts-inference-results`:
+
+```powershell
+.\scripts\infer_modal.ps1 `
+  -Model "/mnt/tts-results/runs/ngoc-a10-v1/phase3_finetune/final" `
+  -InputPath "story.txt" `
+  -OutputPath "story_complete.wav"
+```
+
+Nhiều GPU Modal:
+
+```powershell
+.\scripts\infer_modal.ps1 -Gpu "A10" -NumGpus 2
+```
+
+Tải WAV về khi cần:
+
+```powershell
+modal volume get --env main tts-inference-results /story_complete.wav .\outputs\story_complete.wav
+```
+
+Notebook hướng dẫn nằm tại `notebooks/inference_kaggle.ipynb`. Notebook chỉ đọc `HF_TOKEN` và `GITHUB_TOKEN` từ Kaggle Secrets, không chứa token thật.
+
+### Kiểm thử không tải model
+
+```powershell
+$env:PYTHONPATH = "src"
+python -m unittest discover -s tests -v
+python -m compileall -q src cloud tests
+modal run cloud\modal_inference.py --help
 ```

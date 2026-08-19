@@ -1,0 +1,52 @@
+# Full Phase 3 Hugging Face model directory or repository.
+model: pnnbao-ump/VieNeu-TTS
+model_revision: null
+
+# Legacy LoRA compatibility only. The normal Phase 3 path leaves these null.
+adapter: null
+base_model: null
+
+codec_model: neuphonic/neucodec
+codec_revision: null
+trust_remote_code: false
+
+# auto chooses CUDA first, then MPS, then CPU. A comma-separated devices value
+# such as cuda:0,cuda:1 overrides num_gpus.
+devices: auto
+num_gpus: 1
+dtype: auto
+
+min_chars: 80
+target_chars: 128
+max_chars: 156
+batch_size: 128
+max_length_gap: 12
+max_runtime_batch_size: null
+
+max_context: 2048
+max_new_tokens: 600
+min_new_tokens: 50
+do_sample: false
+temperature: 0.7
+top_p: 0.8
+top_k: 20
+repetition_penalty: 1.1
+cache_implementation: dynamic
+enable_compile: false
+compile_full_batch_only: true
+compile_dynamic: true
+pad_to_multiple_of: 1
+max_retries: 2
+release_codec_encoder: true
+
+sentence_pause_ms: 200
+question_pause_ms: 200
+paragraph_pause_ms: 200
+leading_silence_ms: 300
+trailing_silence_ms: 300
+speed: 1.0
+keep_segments: false
+seed: 3407
+
+reference_min_seconds: 3.0
+reference_max_seconds: 15.0
