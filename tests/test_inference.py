@@ -2,8 +2,11 @@ from __future__ import annotations
 
 import ast
 import json
+import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
+from unittest.mock import MagicMock, patch
 
 from inference import InferenceConfig, prepare_batches
 from inference.batching import (
@@ -14,6 +17,7 @@ from inference.batching import (
 )
 from inference.modeling import CHAT_TEMPLATE, InferenceWorker
 from inference.preprocessing import StoryPreprocessor
+from inference.generation import run_generation
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 
@@ -57,6 +61,7 @@ class InferenceConfigTests(unittest.TestCase):
         self.assertEqual(config.batch_size, 128)
         self.assertEqual(config.max_length_gap, 12)
         self.assertFalse(config.do_sample)
+        self.assertTrue(config.show_progress)
 
     def test_invalid_thresholds_are_rejected(self) -> None:
         with self.assertRaisesRegex(ValueError, "min_chars"):
@@ -136,6 +141,42 @@ class PromptContractTests(unittest.TestCase):
         self.assertEqual(prompt[-3:], [22, 1002, 1004])
         self.assertEqual(prompt[:2], [10, 20])
         self.assertIn(21, prompt)
+
+
+class ProgressTests(unittest.TestCase):
+    def test_progress_counts_successful_segments_once(self) -> None:
+        batches = [[item(0, 10)], [item(1, 11)]]
+        config = InferenceConfig(max_runtime_batch_size=1, max_retries=0, show_progress=True)
+        worker = SimpleNamespace(device=SimpleNamespace(type="cuda"))
+        progress = MagicMock()
+
+        def fake_generate(_worker, batch, _directory, _config):
+            return [
+                {
+                    "index": row["index"],
+                    "status": "ok",
+                    "text": row["text"],
+                    "segment_path": f"segment_{row['index']}.wav",
+                }
+                for row in batch
+            ]
+
+        with tempfile.TemporaryDirectory() as directory:
+            with patch("tqdm.auto.tqdm", return_value=progress) as tqdm_mock:
+                with patch("inference.generation._generate_batch", side_effect=fake_generate):
+                    metadata, _ = run_generation([worker], batches, directory, config)
+
+        self.assertEqual([row["index"] for row in metadata], [0, 1])
+        tqdm_mock.assert_called_once_with(
+            total=2,
+            desc="TTS inference",
+            unit="segment",
+            dynamic_ncols=True,
+            mininterval=0.5,
+            leave=True,
+        )
+        self.assertEqual(sum(call.args[0] for call in progress.update.call_args_list), 2)
+        progress.close.assert_called_once_with()
 
 
 class NotebookTests(unittest.TestCase):

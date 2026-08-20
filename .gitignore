@@ -1,6 +1,9 @@
-# Local dataset. Metadata may be tracked later if explicitly desired.
-data/
+# Local dataset. Keep only the dataset maintenance script in Git.
+data/*
+!data/rename_dataset.py
 samples/
+outputs/
+inputs/
 
 # Local training outputs and caches.
 outputs/
@@ -27,4 +30,3 @@ Thumbs.db
 .env
 .env.*
 !.env.example
-

@@ -43,6 +43,7 @@ class InferenceConfig:
     pad_to_multiple_of: int = 1
     max_retries: int = 2
     release_codec_encoder: bool = True
+    show_progress: bool = True
 
     sentence_pause_ms: int = 200
     question_pause_ms: int = 200

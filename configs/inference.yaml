@@ -38,6 +38,7 @@ compile_dynamic: true
 pad_to_multiple_of: 1
 max_retries: 2
 release_codec_encoder: true
+show_progress: true
 
 sentence_pause_ms: 200
 question_pause_ms: 200

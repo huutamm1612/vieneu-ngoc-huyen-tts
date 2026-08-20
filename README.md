@@ -22,9 +22,11 @@ configs/
   pipeline_3phase.yaml       # toàn bộ hyperparameter
 cloud/
   modal_app.py               # T4 NeuCodec -> shared Volume -> A10 training
+  modal_hf_upload.py         # Modal Volume -> Hugging Face model repo
 scripts/
   train_modal.ps1            # Windows
   train_modal.sh             # Linux/macOS
+  upload_model_to_hf.ps1     # upload Phase 3 final directly from Modal
 src/train/
   config.py                  # dataclass + YAML + override CLI
   data.py                    # audit, phoneme, NeuCodec cache, dataset/collator
@@ -163,6 +165,43 @@ modal volume ls --env main tts-training-results /runs/ngoc-a10-v1
 modal app logs --env main vieneu-tts-three-phase --follow
 ```
 
+## Đẩy model Phase 3 lên Hugging Face
+
+Model được upload thẳng từ `tts-training-results` bằng Modal CPU; không cần GPU và
+không tải checkpoint qua máy local. `HF_TOKEN` trong `huggingface-secret` phải có
+quyền ghi vào model repository đích. Nếu token hiện tại chỉ có quyền đọc, thay nó
+trong `.env.modal` rồi đồng bộ lại:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\sync_modal_secrets.ps1 `
+  -Environment "main"
+```
+
+Upload model cuối của run mặc định. Repository được tạo ở chế độ private nếu chưa
+tồn tại:
+
+```powershell
+powershell -NoProfile -ExecutionPolicy Bypass `
+  -File .\scripts\upload_model_to_hf.ps1 `
+  -RepoId "YOUR_HF_USERNAME/vieneu-tts-ngoc-huyen" `
+  -RunName "ngoc-a10-v1" `
+  -Environment "main"
+```
+
+Chỉ dùng `-Public` khi chủ động muốn tạo repository công khai:
+
+```powershell
+.\scripts\upload_model_to_hf.ps1 `
+  -RepoId "YOUR_HF_USERNAME/vieneu-tts-ngoc-huyen" `
+  -Public
+```
+
+Uploader kiểm tra `COMPLETE.json`, config, tokenizer và weight trước khi tạo repo.
+Nếu repo đã tồn tại nhưng visibility không khớp yêu cầu, upload dừng lại thay vì
+tự động đổi private/public. Khi kết nối bị gián đoạn, chạy lại cùng lệnh để
+Hugging Face tiếp tục và bỏ qua nội dung đã upload thành công.
+
 ## Chạy core ngoài Modal
 
 Khi một máy Linux/CUDA đã cài đủ dependency:
@@ -297,7 +336,13 @@ Tải WAV về khi cần:
 modal volume get --env main tts-inference-results /story_complete.wav .\outputs\story_complete.wav
 ```
 
-Notebook hướng dẫn nằm tại `notebooks/inference_kaggle.ipynb`. Notebook chỉ đọc `HF_TOKEN` và `GITHUB_TOKEN` từ Kaggle Secrets, không chứa token thật.
+Notebook hướng dẫn nằm tại `notebooks/inference_kaggle.ipynb`. Notebook tải full model
+Phase 3 từ Hugging Face bằng `snapshot_download`, nhận TXT qua nút upload rồi lưu WAV
+vào `/kaggle/working`. Notebook chỉ đọc `HF_TOKEN` và `GITHUB_TOKEN` từ Kaggle
+Secrets, không chứa token thật. Progress `TTS inference` nằm trong core nên cùng hiển
+thị tổng số segment trên notebook, terminal và Modal, kể cả khi dùng nhiều GPU. CLI
+có thể tắt bằng `--no-show-progress`; API Python dùng `show_progress=False` trong
+`InferenceConfig`.
 
 ### Kiểm thử không tải model
 

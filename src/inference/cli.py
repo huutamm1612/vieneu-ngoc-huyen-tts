@@ -43,6 +43,7 @@ def build_parser() -> argparse.ArgumentParser:
     parser.add_argument("--do-sample", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--enable-compile", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--keep-segments", action=argparse.BooleanOptionalAction, default=None)
+    parser.add_argument("--show-progress", action=argparse.BooleanOptionalAction, default=None)
     parser.add_argument("--speed", type=float)
     parser.add_argument("--seed", type=int)
     parser.add_argument("--log-level", default="INFO", choices=("DEBUG", "INFO", "WARNING", "ERROR"))
@@ -73,6 +74,7 @@ def _config_from_args(args: argparse.Namespace) -> InferenceConfig:
         "do_sample": args.do_sample,
         "enable_compile": args.enable_compile,
         "keep_segments": args.keep_segments,
+        "show_progress": args.show_progress,
         "speed": args.speed,
         "seed": args.seed,
     }

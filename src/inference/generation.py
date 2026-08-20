@@ -8,7 +8,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import nullcontext
 from pathlib import Path
 from threading import Lock
-from typing import Any
+from typing import Any, Callable
 
 from .batching import assign_batches_to_workers, split_batches_for_execution
 from .config import InferenceConfig
@@ -17,6 +17,7 @@ from .types import InferenceBatch, PreparedBatches
 
 LOGGER = logging.getLogger(__name__)
 _LOG_LOCK = Lock()
+ProgressCallback = Callable[[list[dict[str, Any]]], None]
 
 
 def _left_pad_prompts(worker: InferenceWorker, prompts: list[list[int]], pad_to_multiple_of: int):
@@ -246,14 +247,18 @@ def _run_worker_queue(
     queue: list[tuple[int, InferenceBatch]],
     segment_directory: Path,
     config: InferenceConfig,
+    progress_callback: ProgressCallback | None = None,
 ) -> list[dict[str, Any]]:
     results: list[dict[str, Any]] = []
     for _, batch in queue:
         batch_results = _infer_with_oom_split(worker, batch, segment_directory, config)
         results.extend(batch_results)
-        with _LOG_LOCK:
-            success = sum(info["status"] == "ok" for info in batch_results)
-            LOGGER.info("%s completed %d/%d segments", worker.device, success, len(batch_results))
+        if progress_callback is not None:
+            progress_callback(batch_results)
+        else:
+            with _LOG_LOCK:
+                success = sum(info["status"] == "ok" for info in batch_results)
+                LOGGER.info("%s completed %d/%d segments", worker.device, success, len(batch_results))
     return results
 
 
@@ -262,15 +267,30 @@ def _parallel_round(
     batches: PreparedBatches,
     segment_directory: Path,
     config: InferenceConfig,
+    progress_callback: ProgressCallback | None = None,
 ) -> list[dict[str, Any]]:
     assignments, loads = assign_batches_to_workers(batches, len(workers))
-    LOGGER.info("Inference batch cost by worker: %s", loads)
+    if progress_callback is None:
+        LOGGER.info("Inference batch cost by worker: %s", loads)
     if len(workers) == 1:
-        return _run_worker_queue(workers[0], assignments[0], segment_directory, config)
+        return _run_worker_queue(
+            workers[0],
+            assignments[0],
+            segment_directory,
+            config,
+            progress_callback,
+        )
     results: list[dict[str, Any]] = []
     with ThreadPoolExecutor(max_workers=len(workers), thread_name_prefix="tts-gpu") as executor:
         futures = [
-            executor.submit(_run_worker_queue, worker, assignments[index], segment_directory, config)
+            executor.submit(
+                _run_worker_queue,
+                worker,
+                assignments[index],
+                segment_directory,
+                config,
+                progress_callback,
+            )
             for index, worker in enumerate(workers)
             if assignments[index]
         ]
@@ -298,35 +318,87 @@ def run_generation(
         max_runtime_batch_size=runtime_limit,
     )
     original_items = {int(item["index"]): item for batch in batches for item in batch}
+    progress = None
+    progress_lock = Lock()
+    completed_indices: set[int] = set()
+
+    def update_progress(batch_results: list[dict[str, Any]]) -> None:
+        if progress is None:
+            return
+        with progress_lock:
+            newly_completed = {
+                int(info["index"])
+                for info in batch_results
+                if info.get("status") == "ok" and int(info["index"]) not in completed_indices
+            }
+            completed_indices.update(newly_completed)
+            if newly_completed:
+                progress.update(len(newly_completed))
+            failed = sum(info.get("status") != "ok" for info in batch_results)
+            progress.set_postfix(
+                ok=len(completed_indices),
+                pending=len(original_items) - len(completed_indices),
+                failed=failed,
+                refresh=False,
+            )
+
+    if config.show_progress:
+        from tqdm.auto import tqdm
+
+        progress = tqdm(
+            total=len(original_items),
+            desc="TTS inference",
+            unit="segment",
+            dynamic_ncols=True,
+            mininterval=0.5,
+            leave=True,
+        )
     started = time.perf_counter()
-    results = _parallel_round(workers, execution_batches, output, config)
-    by_index = {int(info["index"]): info for info in results if info["status"] == "ok"}
-    failures = {int(info["index"]): info for info in results if info["status"] != "ok"}
-
-    for retry in range(1, config.max_retries + 1):
-        pending = sorted(set(original_items) - set(by_index))
-        if not pending:
-            break
-        LOGGER.warning("Retry %d/%d for %d failed segments", retry, config.max_retries, len(pending))
-        retry_batches: PreparedBatches = [[original_items[index]] for index in pending]
-        retry_results = _parallel_round(workers, retry_batches, output, config)
-        for info in retry_results:
-            index = int(info["index"])
-            if info["status"] == "ok":
-                info["retry"] = retry
-                by_index[index] = info
-                failures.pop(index, None)
-            else:
-                failures[index] = info
-
-    unresolved = sorted(set(original_items) - set(by_index))
-    if unresolved:
-        details = "; ".join(
-            f"{index}: {failures.get(index, {}).get('error', 'unknown error')}"
-            for index in unresolved[:8]
+    progress_callback = update_progress if progress is not None else None
+    try:
+        results = _parallel_round(
+            workers,
+            execution_batches,
+            output,
+            config,
+            progress_callback,
         )
-        raise RuntimeError(
-            f"Inference failed for {len(unresolved)} segment(s); final WAV was not created. {details}"
-        )
-    metadata = [by_index[index] for index in sorted(by_index)]
-    return metadata, time.perf_counter() - started
+        by_index = {int(info["index"]): info for info in results if info["status"] == "ok"}
+        failures = {int(info["index"]): info for info in results if info["status"] != "ok"}
+
+        for retry in range(1, config.max_retries + 1):
+            pending = sorted(set(original_items) - set(by_index))
+            if not pending:
+                break
+            LOGGER.warning("Retry %d/%d for %d failed segments", retry, config.max_retries, len(pending))
+            retry_batches: PreparedBatches = [[original_items[index]] for index in pending]
+            retry_results = _parallel_round(
+                workers,
+                retry_batches,
+                output,
+                config,
+                progress_callback,
+            )
+            for info in retry_results:
+                index = int(info["index"])
+                if info["status"] == "ok":
+                    info["retry"] = retry
+                    by_index[index] = info
+                    failures.pop(index, None)
+                else:
+                    failures[index] = info
+
+        unresolved = sorted(set(original_items) - set(by_index))
+        if unresolved:
+            details = "; ".join(
+                f"{index}: {failures.get(index, {}).get('error', 'unknown error')}"
+                for index in unresolved[:8]
+            )
+            raise RuntimeError(
+                f"Inference failed for {len(unresolved)} segment(s); final WAV was not created. {details}"
+            )
+        metadata = [by_index[index] for index in sorted(by_index)]
+        return metadata, time.perf_counter() - started
+    finally:
+        if progress is not None:
+            progress.close()

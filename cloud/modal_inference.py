@@ -49,6 +49,7 @@ image = (
         "soxr>=0.5,<1",
         "torchao==0.13.0",
         "transformers==4.57.6",
+        "tqdm>=4.67,<5",
     )
     .env(
         {
