@@ -260,15 +260,46 @@ modal volume ls --env main tts-training-results /runs/ngoc-a10-v1
 
 ## Dataset contract
 
-Dataset không nằm trong Git. Pipeline training đọc cấu trúc sau:
+Dataset audio không nằm trong Git. Tải revision đã dùng để train và tái tạo cấu trúc local bằng:
+
+```powershell
+python -m pip install -e ".[data]"
+python .\data\download_dataset.py
+```
+
+Mặc định script dùng revision bất biến `1ebbfbd1fb828dfd41bff8b1645ad9e56cfc614a` của
+[`pnnbao-ump/ngochuyen_voice`](https://huggingface.co/datasets/pnnbao-ump/ngochuyen_voice),
+đặt kết quả ngay trong `data/` và tạo đúng split `4.717 train + 96 eval`. Script hỗ trợ
+resume, không xóa hoặc ghi đè sample đang có; file giống hệt được tái sử dụng, còn xung
+đột sẽ làm chương trình dừng. Các shard nguồn vẫn nằm trong Hugging Face cache và mọi
+mẫu bị loại khỏi tập train đều được ghi vào JSON reject.
+
+Tạo dataset ở một vị trí khác:
+
+```powershell
+python .\data\download_dataset.py `
+  --output-root "D:\datasets\ngochuyen_story_tts_clean"
+```
+
+Chỉ kiểm tra dataset đã có, không truy cập Hugging Face:
+
+```powershell
+python .\data\download_dataset.py --verify-only
+```
+
+Pipeline training đọc cấu trúc sau:
 
 ```text
 /dataset/
   audio/*.wav
   metadata.csv          # filename.wav|text
   metadata_eval.csv     # filename.wav|text
+  manifest.csv
+  text_rejects.json
+  audio_rejects.json
   processing_config.json
   processing_stats.json
+  SOURCE.txt
 ```
 
 Pipeline kiểm tra audio thiếu, filename trùng giữa train/eval và sequence dài quá 2.048 token. Audio được resample về 16 kHz trước khi NeuCodec encode.
@@ -288,6 +319,9 @@ scripts/
   infer_modal_to_local.py    # TXT local -> Modal -> WAV local
   train_modal.ps1 / .sh      # khởi chạy training
   upload_model_to_hf.ps1     # upload Phase 3 lên Hugging Face
+data/
+  download_dataset.py        # Hugging Face -> dataset local sạch
+  rename_dataset.py          # đổi prefix và đồng bộ metadata
 src/inference/               # core inference độc lập môi trường
 src/train/                   # core training độc lập Modal
 notebooks/

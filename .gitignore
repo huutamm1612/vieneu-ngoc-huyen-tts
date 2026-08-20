@@ -1,5 +1,6 @@
-# Local dataset. Keep only the dataset maintenance script in Git.
-data/
+# Local dataset. Keep maintenance/download scripts in Git, ignore generated data.
+data/*
+!data/*.py
 samples/
 outputs/
 inputs/
