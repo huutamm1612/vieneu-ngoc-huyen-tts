@@ -1,6 +1,5 @@
 # Local dataset. Keep only the dataset maintenance script in Git.
-data/*
-!data/rename_dataset.py
+data/
 samples/
 outputs/
 inputs/
